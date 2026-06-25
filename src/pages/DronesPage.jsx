@@ -17,6 +17,9 @@ export default function DronesPage() {
     battery_percent: "",
     max_flight_minutes: "",
     camera_type: "",
+    initial_latitude: "",
+    initial_longitude: "",
+    initial_altitude_m: "",
     notes: "",
   });
 
@@ -82,12 +85,42 @@ export default function DronesPage() {
       created_by: user?.id || null,
     };
 
-    const { error } = await supabase.from("drones").insert(payload);
+    const { data: insertedDrone, error } = await supabase
+      .from("drones")
+      .insert(payload)
+      .select("id")
+      .single();
 
     if (error) {
       console.error("Drone insert error:", error);
       alert("Σφάλμα αποθήκευσης drone");
     } else {
+      const hasInitialPosition =
+        form.initial_latitude !== "" && form.initial_longitude !== "";
+
+      if (hasInitialPosition) {
+        const { error: positionError } = await supabase
+          .from("drone_positions")
+          .insert({
+            drone_id: insertedDrone.id,
+            latitude: Number(form.initial_latitude),
+            longitude: Number(form.initial_longitude),
+            altitude_m:
+              form.initial_altitude_m === ""
+                ? null
+                : Number(form.initial_altitude_m),
+            source: "manual",
+            recorded_at: new Date().toISOString(),
+          });
+
+        if (positionError) {
+          console.error("Initial drone position insert error:", positionError);
+          alert(
+            "Το drone αποθηκεύτηκε, αλλά δεν αποθηκεύτηκε η αρχική θέση του."
+          );
+        }
+      }
+
       setForm({
         name: "",
         code: "",
@@ -99,6 +132,9 @@ export default function DronesPage() {
         battery_percent: "",
         max_flight_minutes: "",
         camera_type: "",
+        initial_latitude: "",
+        initial_longitude: "",
+        initial_altitude_m: "",
         notes: "",
       });
 
@@ -294,6 +330,55 @@ export default function DronesPage() {
             className="w-full border rounded-lg px-3 py-2"
             placeholder="RGB / Multispectral / Thermal"
           />
+        </div>
+
+        <div className="md:col-span-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">
+                Αρχικό Latitude
+              </label>
+              <input
+                name="initial_latitude"
+                value={form.initial_latitude}
+                onChange={handleChange}
+                type="number"
+                step="any"
+                className="w-full border rounded-lg px-3 py-2"
+                placeholder="40.6401"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">
+                Αρχικό Longitude
+              </label>
+              <input
+                name="initial_longitude"
+                value={form.initial_longitude}
+                onChange={handleChange}
+                type="number"
+                step="any"
+                className="w-full border rounded-lg px-3 py-2"
+                placeholder="22.9444"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">
+                Αρχικό ύψος/m
+              </label>
+              <input
+                name="initial_altitude_m"
+                value={form.initial_altitude_m}
+                onChange={handleChange}
+                type="number"
+                step="any"
+                className="w-full border rounded-lg px-3 py-2"
+                placeholder="0"
+              />
+            </div>
+          </div>
         </div>
 
         <div className="md:col-span-3">
