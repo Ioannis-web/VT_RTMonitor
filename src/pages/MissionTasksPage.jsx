@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 
 export default function MissionTasksPage() {
@@ -20,19 +20,7 @@ export default function MissionTasksPage() {
     estimated_minutes: "",
   });
 
-  useEffect(() => {
-    loadMissions();
-  }, []);
-
-  useEffect(() => {
-    if (selectedMissionId) {
-      loadTasks(selectedMissionId);
-    } else {
-      setTasks([]);
-    }
-  }, [selectedMissionId]);
-
-  async function loadMissions() {
+  const loadMissions = useCallback(async () => {
     setLoadingMissions(true);
 
     const { data, error } = await supabase
@@ -68,9 +56,9 @@ export default function MissionTasksPage() {
     }
 
     setLoadingMissions(false);
-  }
+  }, [selectedMissionId]);
 
-  async function loadTasks(missionId) {
+  const loadTasks = useCallback(async (missionId) => {
     setLoadingTasks(true);
 
     const { data, error } = await supabase
@@ -94,7 +82,19 @@ export default function MissionTasksPage() {
     }
 
     setLoadingTasks(false);
-  }
+  }, []);
+
+  useEffect(() => {
+    loadMissions();
+  }, [loadMissions]);
+
+  useEffect(() => {
+    if (selectedMissionId) {
+      loadTasks(selectedMissionId);
+    } else {
+      setTasks([]);
+    }
+  }, [loadTasks, selectedMissionId]);
 
   function handleChange(e) {
     const { name, value } = e.target;

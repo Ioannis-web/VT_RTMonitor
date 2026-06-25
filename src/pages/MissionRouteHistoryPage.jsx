@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   APIProvider,
   Map,
@@ -24,17 +24,7 @@ export default function MissionRouteHistoryPage() {
   const [loadingMissions, setLoadingMissions] = useState(true);
   const [loadingRoute, setLoadingRoute] = useState(false);
 
-  useEffect(() => {
-    loadMissions();
-  }, []);
-
-  useEffect(() => {
-    if (selectedMissionId) {
-      loadMissionRoute(selectedMissionId);
-    }
-  }, [selectedMissionId]);
-
-  async function loadMissions() {
+  const loadMissions = useCallback(async () => {
     setLoadingMissions(true);
 
     const { data, error } = await supabase
@@ -83,9 +73,9 @@ export default function MissionRouteHistoryPage() {
     }
 
     setLoadingMissions(false);
-  }
+  }, []);
 
-  async function loadMissionRoute(missionId) {
+  const loadMissionRoute = useCallback(async (missionId) => {
     setLoadingRoute(true);
     setSelectedPoint(null);
 
@@ -128,7 +118,17 @@ export default function MissionRouteHistoryPage() {
 
     setRoutePoints(validPoints);
     setLoadingRoute(false);
-  }
+  }, [missions]);
+
+  useEffect(() => {
+    loadMissions();
+  }, [loadMissions]);
+
+  useEffect(() => {
+    if (selectedMissionId) {
+      loadMissionRoute(selectedMissionId);
+    }
+  }, [loadMissionRoute, selectedMissionId]);
 
   const path = useMemo(() => {
     return routePoints.map((p) => ({

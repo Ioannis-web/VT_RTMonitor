@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   APIProvider,
   Map,
@@ -27,17 +27,7 @@ export default function VehicleRouteHistoryPage() {
     new Date().toISOString().slice(0, 10)
   );
 
-  useEffect(() => {
-    loadVehicles();
-  }, []);
-
-  useEffect(() => {
-    if (selectedVehicleId && selectedDate) {
-      loadRoute();
-    }
-  }, [selectedVehicleId, selectedDate]);
-
-  async function loadVehicles() {
+  const loadVehicles = useCallback(async () => {
     setLoadingVehicles(true);
 
     const { data, error } = await supabase
@@ -59,9 +49,9 @@ export default function VehicleRouteHistoryPage() {
     }
 
     setLoadingVehicles(false);
-  }
+  }, []);
 
-  async function loadRoute() {
+  const loadRoute = useCallback(async () => {
     if (!selectedVehicleId || !selectedDate) return;
 
     setLoadingRoute(true);
@@ -107,7 +97,17 @@ export default function VehicleRouteHistoryPage() {
 
     setRoutePoints(validPoints);
     setLoadingRoute(false);
-  }
+  }, [selectedDate, selectedVehicleId]);
+
+  useEffect(() => {
+    loadVehicles();
+  }, [loadVehicles]);
+
+  useEffect(() => {
+    if (selectedVehicleId && selectedDate) {
+      loadRoute();
+    }
+  }, [loadRoute, selectedDate, selectedVehicleId]);
 
   const selectedVehicle = vehicles.find((v) => v.id === selectedVehicleId);
 
