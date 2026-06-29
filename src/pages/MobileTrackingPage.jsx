@@ -1,15 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 
 export default function MobileTrackingPage() {
   const watchIdRef = useRef(null);
   const lastInsertAtRef = useRef(0);
+  const autoStartAttemptedRef = useRef(false);
 
   const [vehicles, setVehicles] = useState([]);
   const [missions, setMissions] = useState([]);
 
   const [selectedVehicleId, setSelectedVehicleId] = useState("");
   const [selectedMissionId, setSelectedMissionId] = useState("");
+  const [trackerSimNumber, setTrackerSimNumber] = useState(() => {
+    return window.localStorage.getItem("visionterra-tracker-sim") || "";
+  });
+  const [autoStartEnabled, setAutoStartEnabled] = useState(() => {
+    return window.localStorage.getItem("visionterra-auto-start-gps") !== "false";
+  });
 
   const [tracking, setTracking] = useState(false);
   const [status, setStatus] = useState("Ανενεργό");
@@ -24,13 +31,32 @@ export default function MobileTrackingPage() {
   });
 
   useEffect(() => {
-    loadVehicles();
-    loadMissions();
+    window.localStorage.setItem("visionterra-tracker-sim", trackerSimNumber);
+  }, [trackerSimNumber]);
 
-    return () => {
-      stopTracking();
-    };
-  }, []);
+  useEffect(() => {
+    window.localStorage.setItem(
+      "visionterra-auto-start-gps",
+      String(autoStartEnabled)
+    );
+  }, [autoStartEnabled]);
+
+  useEffect(() => {
+    if (!trackerSimNumber || vehicles.length === 0 || tracking) return;
+
+    const matchedVehicle = vehicles.find((vehicle) =>
+      phoneNumbersMatch(trackerSimNumber, vehicle.sim_number)
+    );
+
+    if (matchedVehicle) {
+      setSelectedVehicleId(matchedVehicle.id);
+      setErrorMessage("");
+    } else {
+      setErrorMessage(
+        "Δεν βρέθηκε όχημα με αυτόν τον αριθμό SIM. Έλεγξε το SIM Number στην καρτέλα Οχήματα."
+      );
+    }
+  }, [trackerSimNumber, tracking, vehicles]);
 
   useEffect(() => {
     if (!selectedVehicleId) return;
@@ -50,10 +76,10 @@ export default function MobileTrackingPage() {
     }
   }, [selectedVehicleId, missions, selectedMissionId]);
 
-  async function loadVehicles() {
+  const loadVehicles = useCallback(async () => {
     const { data, error } = await supabase
       .from("vehicles")
-      .select("id, name, code, status")
+      .select("id, name, code, status, sim_number")
       .order("name", { ascending: true });
 
     if (error) {
@@ -65,11 +91,11 @@ export default function MobileTrackingPage() {
     setVehicles(data || []);
 
     if (data?.length > 0) {
-      setSelectedVehicleId(data[0].id);
+      setSelectedVehicleId((prev) => prev || data[0].id);
     }
-  }
+  }, []);
 
-  async function loadMissions() {
+  const loadMissions = useCallback(async () => {
     const { data, error } = await supabase
       .from("missions")
       .select(`
@@ -99,52 +125,9 @@ export default function MobileTrackingPage() {
     }
 
     setMissions(data || []);
-  }
+  }, []);
 
-  async function startTracking() {
-    setErrorMessage("");
-
-    if (!selectedVehicleId) {
-      setErrorMessage("Επίλεξε όχημα.");
-      return;
-    }
-
-    if (!("geolocation" in navigator)) {
-      setErrorMessage("Το κινητό/browser δεν υποστηρίζει GPS geolocation.");
-      return;
-    }
-
-    if (selectedMissionId) {
-      await startMissionIfNeeded(selectedMissionId);
-    }
-
-    setStatus("Ζητείται άδεια GPS...");
-
-    watchIdRef.current = navigator.geolocation.watchPosition(
-      handlePositionSuccess,
-      handlePositionError,
-      {
-        enableHighAccuracy: true,
-        maximumAge: 0,
-        timeout: 15000,
-      }
-    );
-
-    setTracking(true);
-    setStatus("Ενεργό tracking");
-  }
-
-  function stopTracking() {
-    if (watchIdRef.current !== null) {
-      navigator.geolocation.clearWatch(watchIdRef.current);
-      watchIdRef.current = null;
-    }
-
-    setTracking(false);
-    setStatus("Ανενεργό");
-  }
-
-  async function startMissionIfNeeded(missionId) {
+  const startMissionIfNeeded = useCallback(async (missionId) => {
     const mission = missions.find((item) => item.id === missionId);
 
     if (!mission) return;
@@ -183,56 +166,22 @@ export default function MobileTrackingPage() {
     );
 
     setSavingMissionStatus(false);
-  }
+  }, [missions]);
 
-  async function completeMission() {
-    setErrorMessage("");
+  const handlePositionError = useCallback((error) => {
+    console.error("Geolocation error:", error);
 
-    if (!selectedMissionId) {
-      setErrorMessage("Δεν έχει επιλεγεί αποστολή.");
-      return;
-    }
-
-    stopTracking();
-
-    setSavingMissionStatus(true);
-
-    const payload = {
-      status: "completed",
-      actual_end: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+    const messages = {
+      1: "Δεν δόθηκε άδεια GPS από τον χρήστη.",
+      2: "Η θέση δεν είναι διαθέσιμη.",
+      3: "Έληξε ο χρόνος αναμονής GPS.",
     };
 
-    const { error } = await supabase
-      .from("missions")
-      .update(payload)
-      .eq("id", selectedMissionId);
+    setErrorMessage(messages[error.code] || error.message || "Σφάλμα GPS.");
+    setStatus("Σφάλμα GPS");
+  }, []);
 
-    if (error) {
-      console.error("Mission complete error:", error);
-      setErrorMessage("Σφάλμα ολοκλήρωσης αποστολής.");
-      setSavingMissionStatus(false);
-      return;
-    }
-
-    setMissions((prev) =>
-      prev.map((item) =>
-        item.id === selectedMissionId
-          ? {
-              ...item,
-              ...payload,
-            }
-          : item
-      )
-    );
-
-    setStatus("Η αποστολή ολοκληρώθηκε.");
-    setSavingMissionStatus(false);
-
-    await loadMissions();
-  }
-
-  async function handlePositionSuccess(position) {
+  const handlePositionSuccess = useCallback(async (position) => {
     const now = Date.now();
     const minIntervalMs = Number(settings.minIntervalSeconds) * 1000;
 
@@ -287,19 +236,149 @@ export default function MobileTrackingPage() {
     setLastPosition(payload);
     setInsertCount((prev) => prev + 1);
     setStatus("Τελευταία θέση αποθηκεύτηκε επιτυχώς");
-  }
+  }, [
+    selectedMissionId,
+    selectedVehicleId,
+    settings.minAccuracyMeters,
+    settings.minIntervalSeconds,
+  ]);
 
-  function handlePositionError(error) {
-    console.error("Geolocation error:", error);
+  const startTracking = useCallback(async () => {
+    setErrorMessage("");
 
-    const messages = {
-      1: "Δεν δόθηκε άδεια GPS από τον χρήστη.",
-      2: "Η θέση δεν είναι διαθέσιμη.",
-      3: "Έληξε ο χρόνος αναμονής GPS.",
+    if (watchIdRef.current !== null) {
+      return;
+    }
+
+    if (!selectedVehicleId) {
+      setErrorMessage("Επίλεξε όχημα.");
+      return;
+    }
+
+    if (!("geolocation" in navigator)) {
+      setErrorMessage("Το κινητό/browser δεν υποστηρίζει GPS geolocation.");
+      return;
+    }
+
+    if (selectedMissionId) {
+      await startMissionIfNeeded(selectedMissionId);
+    }
+
+    setStatus("Ζητείται άδεια GPS...");
+
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      handlePositionSuccess,
+      handlePositionError,
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 15000,
+      }
+    );
+
+    setTracking(true);
+    setStatus("Ενεργό tracking");
+  }, [
+    handlePositionError,
+    handlePositionSuccess,
+    selectedMissionId,
+    selectedVehicleId,
+    startMissionIfNeeded,
+  ]);
+
+  const stopTracking = useCallback(() => {
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+
+    setTracking(false);
+    setStatus("Ανενεργό");
+  }, []);
+
+  useEffect(() => {
+    loadVehicles();
+    loadMissions();
+
+    return () => {
+      stopTracking();
+    };
+  }, [loadMissions, loadVehicles, stopTracking]);
+
+  useEffect(() => {
+    const selectedVehicleForAutoStart = vehicles.find(
+      (vehicle) => vehicle.id === selectedVehicleId
+    );
+
+    if (
+      !autoStartEnabled ||
+      autoStartAttemptedRef.current ||
+      tracking ||
+      !selectedVehicleId ||
+      vehicles.length === 0 ||
+      (trackerSimNumber &&
+        !phoneNumbersMatch(trackerSimNumber, selectedVehicleForAutoStart?.sim_number))
+    ) {
+      return;
+    }
+
+    autoStartAttemptedRef.current = true;
+    startTracking();
+  }, [
+    autoStartEnabled,
+    selectedVehicleId,
+    startTracking,
+    tracking,
+    trackerSimNumber,
+    vehicles,
+    vehicles.length,
+  ]);
+
+  async function completeMission() {
+    setErrorMessage("");
+
+    if (!selectedMissionId) {
+      setErrorMessage("Δεν έχει επιλεγεί αποστολή.");
+      return;
+    }
+
+    stopTracking();
+
+    setSavingMissionStatus(true);
+
+    const payload = {
+      status: "completed",
+      actual_end: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
 
-    setErrorMessage(messages[error.code] || error.message || "Σφάλμα GPS.");
-    setStatus("Σφάλμα GPS");
+    const { error } = await supabase
+      .from("missions")
+      .update(payload)
+      .eq("id", selectedMissionId);
+
+    if (error) {
+      console.error("Mission complete error:", error);
+      setErrorMessage("Σφάλμα ολοκλήρωσης αποστολής.");
+      setSavingMissionStatus(false);
+      return;
+    }
+
+    setMissions((prev) =>
+      prev.map((item) =>
+        item.id === selectedMissionId
+          ? {
+              ...item,
+              ...payload,
+            }
+          : item
+      )
+    );
+
+    setStatus("Η αποστολή ολοκληρώθηκε.");
+    setSavingMissionStatus(false);
+
+    await loadMissions();
   }
 
   function handleSettingsChange(e) {
@@ -342,6 +421,14 @@ export default function MobileTrackingPage() {
               Επιλογή οχήματος
             </label>
 
+            <input
+              value={trackerSimNumber}
+              onChange={(e) => setTrackerSimNumber(e.target.value)}
+              disabled={tracking}
+              className="w-full border rounded-lg px-3 py-3 text-base mb-3"
+              placeholder="Αριθμός SIM/κινητού που έχεις βάλει στο όχημα"
+            />
+
             <select
               value={selectedVehicleId}
               onChange={(e) => setSelectedVehicleId(e.target.value)}
@@ -355,6 +442,7 @@ export default function MobileTrackingPage() {
                   <option key={vehicle.id} value={vehicle.id}>
                     {vehicle.name}
                     {vehicle.code ? ` — ${vehicle.code}` : ""}
+                    {vehicle.sim_number ? ` — ${vehicle.sim_number}` : ""}
                   </option>
                 ))
               )}
@@ -371,6 +459,9 @@ export default function MobileTrackingPage() {
               </div>
               <div>
                 <b>Status:</b> {selectedVehicle.status || "-"}
+              </div>
+              <div>
+                <b>SIM:</b> {selectedVehicle.sim_number || "-"}
               </div>
             </div>
           )}
@@ -457,6 +548,19 @@ export default function MobileTrackingPage() {
               />
             </div>
           </div>
+
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={autoStartEnabled}
+              onChange={(e) => {
+                autoStartAttemptedRef.current = false;
+                setAutoStartEnabled(e.target.checked);
+              }}
+              disabled={tracking}
+            />
+            Αυτόματη εκκίνηση GPS όταν ανοίγει η σελίδα
+          </label>
 
           {!tracking ? (
             <button
@@ -566,4 +670,21 @@ export default function MobileTrackingPage() {
       </div>
     </div>
   );
+}
+
+function normalizePhoneNumber(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function phoneNumbersMatch(input, stored) {
+  const inputNumber = normalizePhoneNumber(input);
+  const storedNumber = normalizePhoneNumber(stored);
+
+  if (!inputNumber || !storedNumber) return false;
+  if (inputNumber === storedNumber) return true;
+
+  const inputTail = inputNumber.slice(-10);
+  const storedTail = storedNumber.slice(-10);
+
+  return inputTail.length >= 10 && inputTail === storedTail;
 }
